@@ -160,6 +160,13 @@ def generate_launch_description():
             description="Include camera at end-effector"
         )
     )
+    declared_arguments.append(
+        DeclareLaunchArgument(
+            "gz_world",
+            default_value="empty.world",
+            description="gazebo starting world"
+        )
+    )
 
     # Initialize Arguments
     runtime_config_package = LaunchConfiguration('runtime_config_package')
@@ -179,7 +186,8 @@ def generate_launch_description():
     command_interface = LaunchConfiguration('command_interface')
     base_frame_file = LaunchConfiguration('base_frame_file')
     namespace = LaunchConfiguration('namespace')
-    use_vision = LaunchConfiguration('use_vision')
+    use_vision = LaunchConfiguration('use_vision') # use vision param
+    gz_world = LaunchConfiguration('gz_world') # use gazebo world param
 
     models_path = os.path.join(get_package_share_directory('iiwa_description'), 'gazebo', 'models')
     world_file = os.path.join(get_package_share_directory('iiwa_description'), 'gazebo', 'world')
@@ -230,7 +238,7 @@ def generate_launch_description():
             namespace,
             ' ',
             'use_vision:=',
-            use_vision
+            use_vision,
         ]
     )
 
@@ -311,7 +319,7 @@ def generate_launch_description():
     )
     iiwa_simulation_world = PathJoinSubstitution(
         [FindPackageShare(description_package),
-            'gazebo/worlds', 'empty.world']
+            'gazebo/worlds', gz_world]
     )
 
     """declared_arguments.append(DeclareLaunchArgument('gz_args', default_value='-r -v 1 empty.sdf',
@@ -408,7 +416,8 @@ def generate_launch_description():
             '/camera@sensor_msgs/msg/Image@gz.msgs.Image',
             '/camera_info@sensor_msgs/msg/CameraInfo@gz.msgs.CameraInfo',
             '--ros-args', 
-            '-r', '/camera:=/image_camera',
+            '-r', '/camera:=/stereo/left/image_rect_color',
+            '-r', '/camera_info:=/stereo/left/camera_info'
         ],
         output='screen',
         condition=IfCondition(use_vision)

@@ -18,7 +18,7 @@
       <joint name="camera_joint" type="fixed">
         <parent link="${prefix}tool0"/>
         <child link="${prefix}camera_link"/>
-        <origin xyz="0 0 0.01" rpy="0 -1.57 -1.57"/>
+        <origin xyz="0 0 0.01" rpy="0 -1.57 -3.14"/>
       </joint>
       <gazebo reference="camera_link">
           <sensor name="camera" type="camera">
