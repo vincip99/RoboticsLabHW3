@@ -250,7 +250,8 @@ private:
                     joint_velocities_.data = pseudoinverse(robot_->getEEJacobian().data)*cartvel;
                 }
                 else if(task_ == "look-at-point"){
-                    joint_velocities_.data = controller_.look_at_point_control(aruco_pose_, init_cart_pose_,robot_->getEEJacobian());
+                    KDL::Jacobian J_cam = robot_->getEEJacobian();
+                    joint_velocities_.data = controller_.look_at_point_control(aruco_pose_, init_cart_pose_, J_cam);
                 }
                 
             }
@@ -329,7 +330,6 @@ private:
         );
         pose_in_camera_frame.M = kdl_rotation;
         pose_in_camera_frame.p = kdl_position;
-        
     }
 
     void joint_state_subscriber(const sensor_msgs::msg::JointState& sensor_msg){

@@ -25,12 +25,7 @@ public:
         input_image_topic_, 10,
         std::bind(&CvImageNode::image_callback, this, std::placeholders::_1)
     );
-
-    // Detect the spherical object and publish the processed image
-  /*     publisher_ =
-        this->create_publisher<sensor_msgs::msg::Image>(output_image_topic_, 10);
-    timer_ = this->create_wall_timer(
-        500ms, std::bind(&MinimalImagePublisher::timer_callback, this)); */
+    
     publisher_ = create_publisher<sensor_msgs::msg::Image>(output_image_topic_, 10);
 
     RCLCPP_INFO(get_logger(), "Node initialized. Subscribing to: %s", input_image_topic_.c_str());

@@ -27,7 +27,7 @@ public:
                            double _Kdp,
                            double _Kdo);
 
-    Eigen::VectorXd look_at_point_control(KDL::Frame c_P_o, 
+    Eigen::VectorXd look_at_point_control(KDL::Frame object_frame, 
                                         KDL::Frame camera_frame,
                                         KDL::Jacobian camera_jacobian);
 

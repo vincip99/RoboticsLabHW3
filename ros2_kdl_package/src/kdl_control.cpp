@@ -90,7 +90,7 @@ Eigen::VectorXd KDLController::idCntr(KDL::Frame &_desPos,
     
 }
 
-Eigen::VectorXd look_at_point_control(KDL::Frame object_frame, KDL::Frame camera_frame,
+Eigen::VectorXd KDLController::look_at_point_control(KDL::Frame object_frame, KDL::Frame camera_frame,
                                         KDL::Jacobian camera_jacobian)
 {
     //////////////////////
