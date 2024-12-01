@@ -7,6 +7,7 @@
 #include "std_msgs/msg/float64_multi_array.hpp"
 #include "std_msgs/msg/float64.hpp"
 #include "sensor_msgs/msg/joint_state.hpp"
+#include "geometry_msgs/msg/pose_stamped.hpp"
 
 #include "rclcpp/rclcpp.hpp"
 #include "rclcpp/wait_for_message.hpp"
@@ -16,15 +17,22 @@
 #include "kdl_planner.h"
 #include "kdl_parser/kdl_parser.hpp"
 
+using namespace KDL;
+using FloatArray = std_msgs::msg::Float64MultiArray;
+using Float = std_msgs::msg::Float64;
+using namespace std::chrono_literals;
+
 class VisionControlNode : public rclcpp::Node {
 public:
     VisionControlNode() : Node("ros2_kdl_vision_control"), 
     node_handle_(std::shared_ptr<VisionControlNode>(this)){
+
         /////////////////////////////
-        //       Node arguments     //
+        //       Node arguments    //
         /////////////////////////////
-        // declare cmd_interface parameter (position, velocity)
-        declare_parameter("cmd_interface", "position"); // defaults to "position"
+
+        // declare cmd_interface parameter (position, velocity, effort)
+        declare_parameter("cmd_interface", "velocity"); // defaults to "position"
         get_parameter("cmd_interface", cmd_interface_);
         RCLCPP_INFO(get_logger(),"Current cmd interface is: '%s'", cmd_interface_.c_str());
 
@@ -34,7 +42,7 @@ public:
         }
 
         // declare cmd_interface parameter (positioning, look-at-point)
-        declare_parameter("task", "positioning"); // defaults to "position"
+        declare_parameter("task", "positioning"); // defaults to "positioning"
         get_parameter("task", task_);
 
         RCLCPP_INFO(get_logger(),"Current task selected is: '%s'", task_.c_str());
@@ -77,19 +85,20 @@ public:
         joint_positions_.resize(nj); // joint positions array
         joint_velocities_.resize(nj); // joint velocities array
         joint_accelerations_.resize(nj);
-        joint_torques_.resize(nj);
+        joint_efforts_.resize(nj);
 
         //////////////////////////////////////////////////////
         // Subscribes to jnt states and update robot values //
         //////////////////////////////////////////////////////
-        // Subscriber to jnt states
-        joint_state_available_ = false;
 
-        image_sub_ = this->create_subscription<sensor_msgs::msg::Image>(
-            "/camera/image_raw", 10, std::bind(&VisionControlNode::imageCallback, this, std::placeholders::_1));
+        // Subscriber to jnt states
+        iteration_ = 0;
+        t_ = 0;
+        joint_state_available_ = false;
+        aruco_pose_available_ = false;
 
         jointSubscriber_ = this->create_subscription<sensor_msgs::msg::JointState>(
-            "/joint_states", 10, std::bind(&Iiwa_pub_sub::joint_state_subscriber, this, std::placeholders::_1));
+            "/joint_states", 10, std::bind(&VisionControlNode::joint_state_subscriber, this, std::placeholders::_1));
 
         // Wait for the joint_state topic
         while(!joint_state_available_){
@@ -106,18 +115,43 @@ public:
         // Compute EE frame
         init_cart_pose_ = robot_->getEEFrame();
         init_cart_vel_ = robot_->getEEVelocity();
+        std::cout << init_cart_pose_ <<std::endl;
 
         // Compute IK
         KDL::JntArray q(nj);
         robot_->getInverseKinematics(init_cart_pose_, q);
 
+        image_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
+            "/aruco_single/pose", 10, std::bind(&VisionControlNode::imageCallback, this, std::placeholders::_1));
+        
+        // Wait for the aruco pose topic
+        while(!aruco_pose_available_){
+            RCLCPP_INFO(this->get_logger(), "No image data received yet! ...");
+            rclcpp::spin_some(node_handle_);
+        }
+
         // Initialize controller
         controller_ = KDLController(*robot_);
 
-        // EE's trajectory initial position (just an offset)
+        aruco_pose_ = init_cart_pose_ * pose_in_camera_frame;
+
+        //aruco_pose_.p = kdl_position; // Assign position to the KDL::Frame
+        //aruco_pose_.M = kdl_rotation; // Assign orientation to the KDL::Frame
+
+        double qx, qy, qz, qw;
+        // Extract the quaternion from the rotation matrix (aruco_pose_.M)
+        aruco_pose_.M.GetQuaternion(qx, qy, qz, qw);
+        RCLCPP_INFO(
+            this->get_logger(),
+            "Transformed Pose in spatial frame:\nPosition: [x: %.2f, y: %.2f, z: %.2f]\nOrientation: [x: %.2f, y: %.2f, z: %.2f, w: %.2f]",
+            aruco_pose_.p.x(), aruco_pose_.p.y(), aruco_pose_.p.z(),
+            qx, qy, qz, qw
+        );
+
+        // EE's trajectory initial position
         Eigen::Vector3d init_position(Eigen::Vector3d(init_cart_pose_.p.data));
-        // EE's trajectory end position (just opposite y)
-        Eigen::Vector3d end_position; end_position << init_position[0], -init_position[1], init_position[2];
+        // EE's trajectory end position 
+        Eigen::Vector3d end_position(Eigen::Vector3d(aruco_pose_.p.data));
 
         // Plan trajectory
         double traj_duration = 1.5, acc_duration = 0.5, t = 0.0;
@@ -133,7 +167,7 @@ public:
             // Create cmd publisher
             cmdPublisher_ = this->create_publisher<FloatArray>("/iiwa_arm_controller/commands", 10);
             timer_ = this->create_wall_timer(std::chrono::milliseconds(100), 
-                                        std::bind(&Iiwa_pub_sub::cmd_publisher, this));
+                                        std::bind(&VisionControlNode::cmd_publisher, this));
         
             // Send joint position commands
             for (long int i = 0; i < joint_positions_.data.size(); ++i) {
@@ -144,7 +178,7 @@ public:
             // Create cmd publisher
             cmdPublisher_ = this->create_publisher<FloatArray>("/velocity_controller/commands", 10);
             timer_ = this->create_wall_timer(std::chrono::milliseconds(100), 
-                                        std::bind(&Iiwa_pub_sub::cmd_publisher, this));
+                                        std::bind(&VisionControlNode::cmd_publisher, this));
         
             // Set joint velocity commands
             for (long int i = 0; i < joint_velocities_.data.size(); ++i) {
@@ -155,7 +189,7 @@ public:
             // Create cmd publisher
             cmdPublisher_ = this->create_publisher<FloatArray>("/effort_controller/commands", 10);
             timer_ = this->create_wall_timer(std::chrono::milliseconds(100), 
-                                        std::bind(&Iiwa_pub_sub::cmd_publisher, this));
+                                        std::bind(&VisionControlNode::cmd_publisher, this));
         
             // Set joint effort commands
             for (long int i = 0; i < joint_efforts_.data.size(); ++i) {
@@ -191,7 +225,7 @@ private:
             trajectory_point p = planner_.compute_trajectory(t_); 
 
             // Compute EE frame
-            KDL::Frame cartpos = robot_->getEEFrame();           
+            KDL::Frame cartpos = robot_->getEEFrame();
 
             // Compute desired Frame
             KDL::Frame desFrame; desFrame.M = cartpos.M; desFrame.p = toKDL(p.pos); 
@@ -206,16 +240,22 @@ private:
                 KDL::Frame nextFrame; nextFrame.M = cartpos.M; nextFrame.p = cartpos.p + (toKDL(p.vel) + toKDL(1*error))*dt; 
 
                 // Compute IK
-                joint_positions_cmd_ = joint_positions_;
-                robot_->getInverseKinematics(nextFrame, joint_positions_cmd_);
+                joint_positions_ = joint_positions_;
+                robot_->getInverseKinematics(nextFrame, joint_positions_);
             }
             else if(cmd_interface_ == "velocity"){
                 // Compute differential IK
                 Vector6d cartvel; cartvel << p.vel + 5*error, o_error;
-                joint_velocities_cmd.data = pseudoinverse(robot_->getEEJacobian().data)*cartvel;
+                if(task_ == "positioning"){
+                    joint_velocities_.data = pseudoinverse(robot_->getEEJacobian().data)*cartvel;
+                }
+                else if(task_ == "look-at-point"){
+                    joint_velocities_.data = controller_.look_at_point_control(aruco_pose_, init_cart_pose_,robot_->getEEJacobian());
+                }
+                
             }
             else if(cmd_interface_ == "effort"){
-                joint_efforts_cmd.data[0] = 0.1*std::sin(2*M_PI*t_/total_time);
+                joint_efforts_.data[0] = 0.1*std::sin(2*M_PI*t_/total_time);
             }
 
             // Update KDLrobot structure
@@ -224,19 +264,19 @@ private:
             if(cmd_interface_ == "position"){
                 // Set joint position commands
                 for (long int i = 0; i < joint_positions_.data.size(); ++i) {
-                    desired_commands_[i] = joint_positions_cmd_(i);
+                    desired_commands_[i] = joint_positions_(i);
                 }
             }
             else if(cmd_interface_ == "velocity"){
                 // Set joint velocity commands
                 for (long int i = 0; i < joint_velocities_.data.size(); ++i) {
-                    desired_commands_[i] = joint_velocities_cmd_(i);
+                    desired_commands_[i] = joint_velocities_(i);
                 }
             }
             else if(cmd_interface_ == "effort"){
                 // Set joint effort commands
                 for (long int i = 0; i < joint_efforts_.data.size(); ++i) {
-                    desired_commands_[i] = joint_efforts_cmd_(i);
+                    desired_commands_[i] = joint_efforts_(i);
                 }
             } 
 
@@ -268,44 +308,28 @@ private:
         }
     }
 
-    void imageCallback(const sensor_msgs::msg::Image::SharedPtr msg) {
-        // Convert ROS2 image to OpenCV Mat
-        cv_bridge::CvImagePtr cv_ptr = cv_bridge::toCvCopy(msg, "bgr8");
-        cv::Mat frame = cv_ptr->image;
+    void imageCallback(const geometry_msgs::msg::PoseStamped& msg) {
+        aruco_pose_available_ = true;
 
-        // Detect Aruco marker
-        std::vector<int> marker_ids;
-        std::vector<std::vector<cv::Point2f>> marker_corners;
-        cv::aruco::detectMarkers(frame, dictionary_, marker_corners, marker_ids);
+        // Extract pose information
+        const auto position = msg.pose.position;
+        const auto orientation = msg.pose.orientation;
 
-        if (!marker_ids.empty()) {
-            // Calculate pose and control commands
-            auto twist = geometry_msgs::msg::Twist();
-            if (task_ == "positioning") {
-                // Align camera position with the marker
-                twist = alignCameraToMarker(marker_corners);
-            } else if (task_ == "look-at-point") {
-                // Orient camera to "look-at-point"
-                twist = lookAtPoint(marker_corners);
-            }
+        RCLCPP_INFO(
+            this->get_logger(),
+            "Received PoseStamped message in camera frame:\nPosition: [x: %.2f, y: %.2f, z: %.2f]\nOrientation: [x: %.2f, y: %.2f, z: %.2f, w: %.2f]",
+            position.x, position.y, position.z,
+            orientation.x, orientation.y, orientation.z, orientation.w
+        );
 
-            // Publish velocity command
-            cmd_pub_->publish(twist);
-        }
-    }
-
-    geometry_msgs::msg::Twist alignCameraToMarker(const std::vector<std::vector<cv::Point2f>> &marker_corners) {
-        geometry_msgs::msg::Twist twist;
-        // Implement positioning logic
-        // Example: Move along X and Y axes to center the marker in the frame
-        return twist;
-    }
-
-    geometry_msgs::msg::Twist lookAtPoint(const std::vector<std::vector<cv::Point2f>> &marker_corners) {
-        geometry_msgs::msg::Twist twist;
-        // Implement orientation logic
-        // Example: Rotate to align the camera with a given marker orientation
-        return twist;
+        // Convert to KDL::Frame
+        KDL::Vector kdl_position(position.x, position.y, position.z);
+        KDL::Rotation kdl_rotation = KDL::Rotation::Quaternion(
+            orientation.x, orientation.y, orientation.z, orientation.w
+        );
+        pose_in_camera_frame.M = kdl_rotation;
+        pose_in_camera_frame.p = kdl_position;
+        
     }
 
     void joint_state_subscriber(const sensor_msgs::msg::JointState& sensor_msg){
@@ -317,9 +341,8 @@ private:
         }
     }
 
-    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_pub_;
-    rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr image_sub_;
-    cv::Ptr<cv::aruco::Dictionary> dictionary_ = cv::aruco::getPredefinedDictionary(cv::aruco::DICT_6X6_250);
+
+    rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr image_sub_;
 
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr jointSubscriber_;
     rclcpp::Publisher<FloatArray>::SharedPtr cmdPublisher_;
@@ -331,8 +354,7 @@ private:
     KDL::JntArray joint_positions_;
     KDL::JntArray joint_velocities_;
     KDL::JntArray joint_accelerations_;
-    
-    KDL::JntArray joint_torques_;
+    KDL::JntArray joint_efforts_;
 
     std::shared_ptr<KDLRobot> robot_;
     KDLPlanner planner_;
@@ -340,9 +362,9 @@ private:
 
     unsigned int nj;
     bool joint_state_available_;
+    bool aruco_pose_available_;
 
     int iteration_;
-    
     double t_;
     double error_norm;
 
@@ -351,6 +373,9 @@ private:
 
     KDL::Frame init_cart_pose_;
     KDL::Twist init_cart_vel_;
+
+    KDL::Frame aruco_pose_;
+    KDL::Frame pose_in_camera_frame;
 };
 
 int main(int argc, char **argv) {

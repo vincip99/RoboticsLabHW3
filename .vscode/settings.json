@@ -1,6 +1,9 @@
 {
     "files.associations": {
         "numbers": "cpp",
-        "memory": "cpp"
-    }
+        "memory": "cpp",
+        "functional": "cpp",
+        "core": "cpp"
+    },
+    "cmake.sourceDirectory": "/home/vincip/RoboticsLabHW3/ros2_kdl_package"
 }

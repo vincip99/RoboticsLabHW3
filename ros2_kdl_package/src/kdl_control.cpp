@@ -89,3 +89,38 @@ Eigen::VectorXd KDLController::idCntr(KDL::Frame &_desPos,
     return B*(Jpinv*y) + robot_->getCoriolis(); //+ robot_->getGravity();
     
 }
+
+Eigen::VectorXd look_at_point_control(KDL::Frame object_frame, KDL::Frame camera_frame,
+                                        KDL::Jacobian camera_jacobian)
+{
+    //////////////////////
+    // Compute L matrix //
+    //////////////////////
+
+    // Convert the camera rotation to Eigen and build the 6x6 spatial rotation matrix
+    Matrix6d R = spatialRotation(camera_frame.M);;
+
+    // Compute the direction vector s
+    Eigen::Vector3d c_P_o = toEigen(object_frame.p);
+    Eigen::Vector3d s = c_P_o / c_P_o.norm();
+
+    // Interaction matrix L
+    Eigen::Matrix<double, 3, 6> L = Eigen::Matrix<double, 3, 6>::Zero();
+    Eigen::Matrix3d L_11 = (-1 / c_P_o.norm()) * (Eigen::Matrix3d::Identity() - s * s.transpose());
+    L.block<3, 3>(0, 0) = L_11;
+    L.block<3, 3>(0, 3) = skew(s);
+    L = L * R.transpose();
+
+     // Jacobian in camera frame
+    Eigen::MatrixXd J_c = camera_jacobian.data;
+
+    // Compute joint velocities
+    Eigen::Vector3d desired_dir(0, 0, 1);
+    
+    // Compute joint velocities
+    Eigen::VectorXd joint_velocities = 10.0 * pseudoinverse(L * J_c) * desired_dir;
+
+    // Return computed joint velocities
+    return joint_velocities;
+
+}

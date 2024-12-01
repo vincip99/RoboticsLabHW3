@@ -27,6 +27,10 @@ public:
                            double _Kdp,
                            double _Kdo);
 
+    Eigen::VectorXd look_at_point_control(KDL::Frame c_P_o, 
+                                        KDL::Frame camera_frame,
+                                        KDL::Jacobian camera_jacobian);
+
 private:
 
     KDLRobot* robot_;
