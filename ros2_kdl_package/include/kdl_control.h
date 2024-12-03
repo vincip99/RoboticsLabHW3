@@ -29,7 +29,8 @@ public:
 
     Eigen::VectorXd look_at_point_control(KDL::Frame object_frame, 
                                         KDL::Frame camera_frame,
-                                        KDL::Jacobian camera_jacobian);
+                                        KDL::Jacobian camera_jacobian,
+                                        Eigen::VectorXd q0_dot);
 
 private:
 

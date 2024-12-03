@@ -91,7 +91,7 @@ Eigen::VectorXd KDLController::idCntr(KDL::Frame &_desPos,
 }
 
 Eigen::VectorXd KDLController::look_at_point_control(KDL::Frame object_frame, KDL::Frame camera_frame,
-                                        KDL::Jacobian camera_jacobian)
+                                        KDL::Jacobian camera_jacobian, Eigen::VectorXd q0_dot)
 {
     //////////////////////
     // Compute L matrix //
@@ -109,16 +109,27 @@ Eigen::VectorXd KDLController::look_at_point_control(KDL::Frame object_frame, KD
     Eigen::Matrix3d L_11 = (-1 / c_P_o.norm()) * (Eigen::Matrix3d::Identity() - s * s.transpose());
     L.block<3, 3>(0, 0) = L_11;
     L.block<3, 3>(0, 3) = skew(s);
-    L = L * R.transpose();
+    L = L * R;
 
-     // Jacobian in camera frame
-    Eigen::MatrixXd J_c = camera_jacobian.data;
+    ///////////////////////
+    // Compute Jacobians //
+    ///////////////////////
 
-    // Compute joint velocities
-    Eigen::Vector3d desired_dir(0, 0, 1);
-    
-    // Compute joint velocities
-    Eigen::VectorXd joint_velocities = 10.0 * pseudoinverse(L * J_c) * desired_dir;
+    Eigen::MatrixXd J_c = camera_jacobian.data; // Camera Jacobian in the camera frame
+    Eigen::MatrixXd LJ = L * J_c;              // Combined matrix L * J_c
+    Eigen::MatrixXd LJ_pinv = LJ.completeOrthogonalDecomposition().pseudoInverse(); // Moore-Penrose pseudoinverse of L * J_c
+
+    // Compute null-space projector N
+    Eigen::MatrixXd I = Eigen::MatrixXd::Identity(J_c.cols(), J_c.cols());
+    Eigen::MatrixXd N = I - (LJ_pinv * LJ);
+
+    /////////////////////////
+    // Compute Joint Velocities
+    /////////////////////////
+
+    Eigen::Vector3d s_d(0, 0, 1); // Desired unit vector pointing forward
+    double k = 10.0;              // Gain for the primary task
+    Eigen::VectorXd joint_velocities = k * LJ_pinv * s_d + N * q0_dot;
 
     // Return computed joint velocities
     return joint_velocities;
