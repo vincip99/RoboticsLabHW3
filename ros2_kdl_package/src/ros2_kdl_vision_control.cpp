@@ -116,7 +116,7 @@ public:
         cart_vel_ = robot_->getEEVelocity();
 
         // Compute IK
-        KDL::JntArray q(nj);
+        q.resize(nj);
         robot_->getInverseKinematics(cart_pose_, q);
 
         image_sub_ = this->create_subscription<geometry_msgs::msg::PoseStamped>(
@@ -140,14 +140,26 @@ public:
 
         // Marker in spatial frame
         aruco_pose_ = cart_pose_ * pose_in_tool_frame;
-        std::cout << aruco_pose_.p <<std::endl;
-        std::cout << pose_in_tool_frame.p <<std::endl;
-        std::cout << pose_in_camera_frame.p <<std::endl;
  
         double roll, pitch, yaw;
         // Extract the roll, pitch, and yaw from the rotation matrix (aruco_pose_.M)
-        aruco_pose_.M.GetRPY(roll, pitch, yaw);
+        pose_in_camera_frame.M.GetRPY(roll, pitch, yaw);
+        RCLCPP_INFO(
+            this->get_logger(),
+            "Transformed Pose in camera frame:\nPosition: [x: %.2f, y: %.2f, z: %.2f]\nOrientation: [roll: %.2f, pitch: %.2f, yaw: %.2f]",
+            pose_in_camera_frame.p.x(), pose_in_camera_frame.p.y(), pose_in_camera_frame.p.z(),
+            roll, pitch, yaw
+        );
 
+        pose_in_tool_frame.M.GetRPY(roll, pitch, yaw);
+        RCLCPP_INFO(
+            this->get_logger(),
+            "Transformed Pose in tool frame:\nPosition: [x: %.2f, y: %.2f, z: %.2f]\nOrientation: [roll: %.2f, pitch: %.2f, yaw: %.2f]",
+            pose_in_tool_frame.p.x(), pose_in_tool_frame.p.y(), pose_in_tool_frame.p.z(),
+            roll, pitch, yaw
+        );
+
+        aruco_pose_.M.GetRPY(roll, pitch, yaw);
         RCLCPP_INFO(
             this->get_logger(),
             "Transformed Pose in spatial frame:\nPosition: [x: %.2f, y: %.2f, z: %.2f]\nOrientation: [roll: %.2f, pitch: %.2f, yaw: %.2f]",
@@ -158,19 +170,26 @@ public:
         // EE's trajectory initial position
         Eigen::Vector3d init_position = toEigen(cart_pose_.p);
         std::cout << init_position <<std::endl;
-        // EE's trajectory end position 
-        Eigen::Vector3d end_position = toEigen(aruco_pose_.p);
+        // EE's trajectory end position
+        Eigen::Vector3d end_position;
+        if (task_ == "positioning"){
+            end_position = toEigen(aruco_pose_.p);
+            // Plan trajectory
+            total_time = 1.5, acc_duration = 0.5;
+            planner_ = KDLPlanner(total_time, acc_duration, init_position, end_position); // currently using trapezoidal velocity profile
+        } else {
+            end_position = toEigen(cart_pose_.p);
+            total_time = 2.5, acc_duration = 0.5;
+            planner_ = KDLPlanner(total_time, acc_duration, init_position, end_position); // currently using trapezoidal velocity profile
+        }
+        
         std::cout << end_position <<std::endl;
-
-        // Plan trajectory
-        double traj_duration = 1.5, acc_duration = 0.5;
-        planner_ = KDLPlanner(traj_duration, acc_duration, init_position, end_position); // currently using trapezoidal velocity profile
 
         // Retrieve the first trajectory point
         p = planner_.compute_trajectory(t_);
 
         // compute errors
-        error = computeLinearError(Eigen::Vector3d(aruco_pose_.p.data), Eigen::Vector3d(cart_pose_.p.data));
+        error = computeLinearError(p.pos, Eigen::Vector3d(cart_pose_.p.data));
         std::cout << "The error norm is : " << error.norm() << std::endl;
         error_norm = error.norm();
 
@@ -224,8 +243,8 @@ private:
         iteration_ = iteration_ + 1;
 
         // define trajectory
-        double total_time = 1.5; // 
-        int trajectory_len = 150; // 
+        //double total_time = 1.5; // 
+        int trajectory_len = total_time*100; // 
         int loop_rate = trajectory_len / total_time;
         double dt = 1.0 / loop_rate;
         t_+=dt;
@@ -248,8 +267,8 @@ private:
             KDL::Twist desAcc; desAcc = KDL::Twist(KDL::Vector(p.acc[0], p.acc[1], p.acc[2]),KDL::Vector::Zero());   // X_ddot_des
 
             // compute errors
-            error = computeLinearError(Eigen::Vector3d(aruco_pose_.p.data), Eigen::Vector3d(cartpos.p.data));
-            o_error = computeOrientationError(toEigen(cartpos.M), toEigen(aruco_pose_.M));
+            error = computeLinearError(Eigen::Vector3d(desPos.p.data), Eigen::Vector3d(cartpos.p.data));
+            o_error = computeOrientationError(toEigen(cartpos.M), toEigen(desPos.M));
             std::cout << "The error norm is : " << error.norm() << std::endl;
             error_norm = error.norm();
 
@@ -268,7 +287,16 @@ private:
                     joint_velocities_.data = pseudoinverse(robot_->getEEJacobian().data)*cartvel;
                 }
                 else{
-                    joint_velocities_.data = controller_.look_at_point_control(pose_in_camera_frame, cartpos, J_cam, q0_dot);
+                    // Define the pose in the camera frame
+                    KDL::Frame cartpos_camera = cartpos * KDL::Frame(
+                        KDL::Rotation::RotY(-1.57) * KDL::Rotation::RotZ(-3.14)
+                    );
+
+                    // Transform the Jacobian J_cam into the camera frame
+                    KDL::Jacobian J_cam_camera(J_cam.columns());
+                    KDL::changeBase(J_cam, cartpos_camera.M, J_cam_camera);
+
+                    joint_velocities_.data = controller_.look_at_point_control(pose_in_camera_frame, cartpos_camera, J_cam_camera, q0_dot);
                 }
                 
             }
@@ -278,7 +306,24 @@ private:
                 double Kp = 25;
                 double Kd = 5;
 
-                joint_velocities_.data = controller_.look_at_point_control(pose_in_camera_frame, cartpos, J_cam, q0_dot);
+                // look at point: compute rotation error from angle/axis
+                Eigen::Matrix<double,3,1> aruco_pos_n = toEigen(aruco_pose_.p);
+                aruco_pos_n.normalize();
+                Eigen::Vector3d r_o = skew(Eigen::Vector3d(0,0,1))*aruco_pos_n;
+                double aruco_angle = std::acos(Eigen::Vector3d(0,0,1).dot(aruco_pos_n));
+                KDL::Rotation Re = KDL::Rotation::Rot(KDL::Vector(r_o[0], r_o[1], r_o[2]), aruco_angle);
+                //des_pose.M=robot.getEEFrame().M*Re*ee_T_cam.M.Inverse();
+
+                // Define the pose in the camera frame
+                KDL::Frame cartpos_camera = cartpos * KDL::Frame(
+                    KDL::Rotation::RotY(1.57) * KDL::Rotation::RotX(3.14)
+                );
+
+                // Transform the Jacobian J_cam into the camera frame
+                KDL::Jacobian J_cam_camera(J_cam.columns());
+                KDL::changeBase(J_cam, cartpos_camera.M, J_cam_camera);
+
+                joint_velocities_.data = controller_.look_at_point_control(pose_in_camera_frame, cartpos_camera, J_cam, q0_dot);
 
                 // Ensure proper orientation matrices for desired and current rotations
                 Eigen::Matrix<double,3,3,Eigen::RowMajor> R_des(cart_pose_.M.data);
@@ -428,6 +473,8 @@ private:
     KDL::JntArray joint_accelerations_;
     KDL::JntArray joint_efforts_;
 
+    KDL::JntArray q;
+
     std::shared_ptr<KDLRobot> robot_;
     KDLPlanner planner_;
     KDLController controller_;
@@ -439,6 +486,8 @@ private:
     int iteration_;
     double t_;
     double error_norm;
+    double total_time;
+    double acc_duration;
 
     std::string task_;
     std::string cmd_interface_;

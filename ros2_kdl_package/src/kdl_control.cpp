@@ -90,7 +90,7 @@ Eigen::VectorXd KDLController::idCntr(KDL::Frame &_desPos,
     
 }
 
-Eigen::VectorXd KDLController::look_at_point_control(KDL::Frame object_frame, KDL::Frame camera_frame,
+Eigen::VectorXd KDLController::look_at_point_control(KDL::Frame pose_in_camera_frame, KDL::Frame camera_frame,
                                         KDL::Jacobian camera_jacobian, Eigen::VectorXd q0_dot)
 {
     //////////////////////
@@ -98,10 +98,10 @@ Eigen::VectorXd KDLController::look_at_point_control(KDL::Frame object_frame, KD
     //////////////////////
 
     // Convert the camera rotation to Eigen and build the 6x6 spatial rotation matrix
-    Matrix6d R = spatialRotation(camera_frame.M);;
+    Matrix6d R = spatialRotation(camera_frame.M);
 
     // Compute the direction vector s
-    Eigen::Vector3d c_P_o = toEigen(object_frame.p);
+    Eigen::Vector3d c_P_o = toEigen(pose_in_camera_frame.p);
     Eigen::Vector3d s = c_P_o / c_P_o.norm();
 
     // Interaction matrix L
@@ -128,8 +128,11 @@ Eigen::VectorXd KDLController::look_at_point_control(KDL::Frame object_frame, KD
     /////////////////////////
 
     Eigen::Vector3d s_d(0, 0, 1); // Desired unit vector pointing forward
-    double k = 10.0;              // Gain for the primary task
+    double k = -10;              // Gain for the primary task
     Eigen::VectorXd joint_velocities = k * LJ_pinv * s_d + N * q0_dot;
+
+    Eigen::Vector3d s_error = s - s_d;
+    std::cout << s_error.norm() << std::endl;
 
     // Return computed joint velocities
     return joint_velocities;
