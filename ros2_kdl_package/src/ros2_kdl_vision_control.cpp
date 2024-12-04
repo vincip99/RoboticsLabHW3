@@ -128,9 +128,6 @@ public:
             rclcpp::spin_some(node_handle_);
         }
 
-        KDL::Chain chain = robot_->getChain();
-        fkSol_ = new KDL::ChainFkSolverPos_recursive(chain);
-
         // Initialize controller
         controller_ = KDLController(*robot_);
 
@@ -143,6 +140,9 @@ public:
 
         // Marker in spatial frame
         aruco_pose_ = cart_pose_ * pose_in_tool_frame;
+        std::cout << aruco_pose_.p <<std::endl;
+        std::cout << pose_in_tool_frame.p <<std::endl;
+        std::cout << pose_in_camera_frame.p <<std::endl;
  
         double roll, pitch, yaw;
         // Extract the roll, pitch, and yaw from the rotation matrix (aruco_pose_.M)
@@ -157,20 +157,9 @@ public:
 
         // EE's trajectory initial position
         Eigen::Vector3d init_position = toEigen(cart_pose_.p);
-        //std::cout << init_position <<std::endl;
+        std::cout << init_position <<std::endl;
         // EE's trajectory end position 
-
-        Eigen::Vector3d end_position;
-        
-        //if(task_ == "positioning"){
-        
-            end_position = toEigen(aruco_pose_.p);
-/*         
-        }else{
-
-            end_position << init_position[0], -init_position[1], init_position[2];
-
-        } */
+        Eigen::Vector3d end_position = toEigen(aruco_pose_.p);
         std::cout << end_position <<std::endl;
 
         // Plan trajectory
@@ -181,7 +170,9 @@ public:
         p = planner_.compute_trajectory(t_);
 
         // compute errors
-        Eigen::Vector3d error = computeLinearError(Eigen::Vector3d(aruco_pose_.p.data), Eigen::Vector3d(cart_pose_.p.data));
+        error = computeLinearError(Eigen::Vector3d(aruco_pose_.p.data), Eigen::Vector3d(cart_pose_.p.data));
+        std::cout << "The error norm is : " << error.norm() << std::endl;
+        error_norm = error.norm();
 
          if(cmd_interface_ == "position"){
             // Create cmd publisher
@@ -257,8 +248,8 @@ private:
             KDL::Twist desAcc; desAcc = KDL::Twist(KDL::Vector(p.acc[0], p.acc[1], p.acc[2]),KDL::Vector::Zero());   // X_ddot_des
 
             // compute errors
-            Eigen::Vector3d error = computeLinearError(p.pos, Eigen::Vector3d(cartpos.p.data));
-            Eigen::Vector3d o_error = computeOrientationError(toEigen(cart_pose_.M), toEigen(cartpos.M));
+            error = computeLinearError(Eigen::Vector3d(aruco_pose_.p.data), Eigen::Vector3d(cartpos.p.data));
+            o_error = computeOrientationError(toEigen(cartpos.M), toEigen(aruco_pose_.M));
             std::cout << "The error norm is : " << error.norm() << std::endl;
             error_norm = error.norm();
 
@@ -278,8 +269,6 @@ private:
                 }
                 else{
                     joint_velocities_.data = controller_.look_at_point_control(pose_in_camera_frame, cartpos, J_cam, q0_dot);
-/*                     std::cout << pose_in_camera_frame << std::endl;
-                    std::cout << robot_->getEEFrame() << std::endl; */
                 }
                 
             }
@@ -288,6 +277,8 @@ private:
                 // Define control gains for proportional (Kp) and derivative (Kd) terms
                 double Kp = 25;
                 double Kd = 5;
+
+                joint_velocities_.data = controller_.look_at_point_control(pose_in_camera_frame, cartpos, J_cam, q0_dot);
 
                 // Ensure proper orientation matrices for desired and current rotations
                 Eigen::Matrix<double,3,3,Eigen::RowMajor> R_des(cart_pose_.M.data);
@@ -408,6 +399,8 @@ private:
         pose_in_camera_frame.M = kdl_rotation;
         pose_in_camera_frame.p = kdl_position;
 
+        // object detected into the end effector frame
+        pose_in_tool_frame.p = kdl_position;
         pose_in_tool_frame.M = KDL::Rotation::RotX(3.14) * KDL::Rotation::RotY(1.57) * kdl_rotation;
 
     }
@@ -458,6 +451,9 @@ private:
     KDL::Frame pose_in_tool_frame;
 
     trajectory_point p;
+
+    Eigen::Vector3d error;
+    Eigen::Vector3d o_error;
 
     KDL::ChainFkSolverPos_recursive* fkSol_;
 };

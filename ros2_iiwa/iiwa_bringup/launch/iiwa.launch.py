@@ -423,6 +423,15 @@ def generate_launch_description():
         condition=IfCondition(use_vision)
     )
 
+    rqt_image = Node(
+        package='rqt_image_view',
+        executable='rqt_image_view',
+        name='rqt_image_view',
+        output='screen',
+        arguments=['--force-discover'],
+        condition = IfCondition(use_vision)
+    )
+
     nodes = [
         gazebo,
         control_node,
@@ -436,6 +445,7 @@ def generate_launch_description():
         external_torque_broadcaster_spawner,
         delay_robot_controller_spawner_after_joint_state_broadcaster_spawner,
         bridge_camera,
+        rqt_image,
     ]
 
     return LaunchDescription([SetEnvironmentVariable(name="GZ_SIM_RESOURCE_PATH", value = models_path + ':' + os.environ.get('GZ_SIM_RESOURCE_PATH', ''))] + declared_arguments + nodes)

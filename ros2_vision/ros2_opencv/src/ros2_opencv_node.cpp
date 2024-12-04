@@ -1,3 +1,5 @@
+#include <math.h>
+
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "std_msgs/msg/header.hpp"
@@ -12,7 +14,7 @@ class CvImageNode : public rclcpp::Node {
 public:
   CvImageNode() : Node("opencv_image_publisher"), count_(0) {
     // Declare parameters
-    declare_parameter<std::string>("input_image_topic", "/image_camera");
+    declare_parameter<std::string>("input_image_topic", "/stereo/left/image_rect_color");
     declare_parameter<std::string>("output_image_topic", "/processed_image");
 
     // Get parameters
@@ -41,20 +43,39 @@ private:
       cv::Mat img_ = cv_ptr->image;
 
       // Convert to grayscale
-      cv::Mat gray;
-      cv::cvtColor(img_, gray, cv::COLOR_BGR2GRAY);
+      cv::Mat gray_img;
+      cv::cvtColor(img_, gray_img, cv::COLOR_BGR2GRAY);
+
+      // Hardcoded parameters for blob detection
+      cv::SimpleBlobDetector::Params params;
+      params.minThreshold = 0.0;  // Minimum intensity threshold for blob detection
+      params.maxThreshold = 255.0; // Maximum intensity threshold
+
+      // Filter by area
+      params.filterByArea = true;
+      params.minArea = M_PI * pow(sphere_diameter_pixels / 2.0 * 0.8, 2);  // Allow for some tolerance
+      params.maxArea = M_PI * pow(sphere_diameter_pixels / 2.0 * 1.2, 2);  // Allow for some tolerance
+      // Filter by Circularity
+      params.filterByCircularity = true;
+      params.minCircularity = 0.785; // Near circular shape
+      // Filter by Convexity
+      params.filterByConvexity = true;
+      params.minConvexity = 0.87;
+      // Filter by Inertia
+      params.filterByInertia = true;
+      params.minInertiaRatio = 0.6; // Tolerance for roundness
 
       // Set up the detector with default parameters.
-      cv::Ptr<cv::SimpleBlobDetector> detector = cv::SimpleBlobDetector::create();
+      cv::Ptr<cv::SimpleBlobDetector> detector = cv::SimpleBlobDetector::create(params);
 
       // Detect blobs
       std::vector<cv::KeyPoint> keypoints;
-      detector->detect(gray, keypoints);
+      detector->detect(gray_img, keypoints);
 
       // Draw detected blobs as red circles
       // DrawMatchesFlags::DRAW_RICH_KEYPOINTS ensures the size corresponds to blob size
       cv::Mat im_with_keypoints;
-      cv::drawKeypoints(gray, keypoints, im_with_keypoints, cv::Scalar(0, 0, 255), cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS);
+      cv::drawKeypoints(gray_img, keypoints, im_with_keypoints, cv::Scalar(0, 0, 255), cv::DrawMatchesFlags::DRAW_RICH_KEYPOINTS);
 
       // Convert the processed image to ROS2 message
       auto msg_ = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", im_with_keypoints).toImageMsg();
@@ -64,68 +85,12 @@ private:
       RCLCPP_INFO(this->get_logger(), "Image %ld published", count_);
       count_++; 
 
-/*       // Detect circular objects using HoughCircles
-      std::vector<cv::Vec3f> circles;
-      cv::HoughCircles(
-          gray, circles, cv::HOUGH_GRADIENT, 1,
-          gray.rows / 8,  // Min distance between circles
-          100,            // Upper threshold for Canny edge detector
-          30,             // Threshold for center detection
-          10, 50          // Min and max radius
-      );
-
-      // Draw detected circles on the original image
-      for (const auto &circle : circles) {
-          cv::Point center(cvRound(circle[0]), cvRound(circle[1]));
-          int radius = cvRound(circle[2]);
-          cv::circle(img_, center, radius, cv::Scalar(0, 255, 0), 2);
-          cv::circle(img_, center, 2, cv::Scalar(0, 0, 255), 3);
-      }
-
-      // Publish the processed image
-      cv_bridge::CvImage out_msg;
-      out_msg.header = msg->header;
-      out_msg.encoding = sensor_msgs::image_encodings::BGR8;
-      out_msg.image = img_;
-      publisher_->publish(*out_msg.toImageMsg());
-      count_++; */
     } catch (cv_bridge::Exception &e) {
       RCLCPP_ERROR(get_logger(), "cv_bridge exception: %s", e.what());
     }
   }
 
-  /*   void timer_callback() {
-    // Create a new 640x480 image
-    //cv::Mat my_image(cv::Size(640, 480), CV_8UC3);
- 
-    // Generate an image where each pixel is a random color
-    //cv::randu(my_image, cv::Scalar(0, 0, 0), cv::Scalar(255, 255, 255));
- 
-    // Write message to be sent. Member function toImageMsg() converts a CvImage
-    // into a ROS image message
-    msg_ = cv_bridge::CvImage(std_msgs::msg::Header(), "bgr8", my_image)
-               .toImageMsg();
- 
-    // Publish the image to the topic defined in the publisher
-    publisher_->publish(*msg_.get());
-    RCLCPP_INFO(this->get_logger(), "Image %ld published", count_);
-    count_++; 
-
-    // Publish the processed image
-    cv_bridge::CvImage out_msg;
-    //out_msg.header = msg->header;
-    out_msg.encoding = sensor_msgs::image_encodings::BGR8;
-    out_msg.image = img_;
-    publisher_->publish(out_msg.toImageMsg()); */
-    // Prepare the output message
- /*     cv_bridge::CvImage out_msg;
-    out_msg.encoding = sensor_msgs::image_encodings::BGR8;
-    out_msg.image = img_;  // The processed image
-
-    // Publish the image directly (not as a shared_ptr)
-    publisher_->publish(*out_msg.toImageMsg());
-  }*/
-
+  // Publisher variables
   rclcpp::TimerBase::SharedPtr timer_;
   sensor_msgs::msg::Image::SharedPtr msg_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr publisher_;
@@ -138,8 +103,11 @@ private:
   std::string input_image_topic_;
   std::string output_image_topic_;
 
-  // Processed image
-  cv::Mat img_;
+  
+  // Hardcoded parameters for sphere detection
+  double sphere_diameter = 0.15;  // Diameter of the sphere in real-world units
+  double pixels_per_meter = 1000.0;  // Conversion factor from meters to pixels (example value)
+  double sphere_diameter_pixels = sphere_diameter * pixels_per_meter;
 
 };
  
