@@ -128,7 +128,7 @@ Eigen::VectorXd KDLController::look_at_point_control(KDL::Frame pose_in_camera_f
     /////////////////////////
 
     Eigen::Vector3d s_d(0, 0, 1); // Desired unit vector pointing forward
-    double k = 10;              // Gain for the primary task
+    double k = -10;              // Gain for the primary task
     Eigen::VectorXd joint_velocities = k * LJ_pinv * s_d + N * q0_dot;
 
     Eigen::Vector3d s_error = s - s_d;
