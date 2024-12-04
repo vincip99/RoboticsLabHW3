@@ -49,7 +49,7 @@ ros2 launch aruco_ros single.launch.py marker_size:=0.1 marker_id:=201
 
 In another terminal, run the control node
 ```
-ros2 run ros2_kdl_package ros2_kdl_vision_control --ros-args -p task:="positioning" -p cmd_interface:="velocity" -p task:="look-at-point"
+ros2 run ros2_kdl_package ros2_kdl_vision_control --ros-args -p task:="positioning" -p cmd_interface:="velocity"
 ```
 
 Velocity controller with look at point controller:
