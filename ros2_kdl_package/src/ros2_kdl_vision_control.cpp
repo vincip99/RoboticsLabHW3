@@ -32,7 +32,7 @@ public:
         /////////////////////////////
 
         // declare cmd_interface parameter (position, velocity, effort)
-        declare_parameter("cmd_interface", "velocity"); // defaults to "position"
+        declare_parameter("cmd_interface", "effort"); // defaults to "position"
         get_parameter("cmd_interface", cmd_interface_);
         RCLCPP_INFO(get_logger(),"Current cmd interface is: '%s'", cmd_interface_.c_str());
 
@@ -40,6 +40,16 @@ public:
         {
             RCLCPP_ERROR(get_logger(),"Selected cmd interface is not valid! Use 'position', 'velocity' or 'effort' instead..."); return;
         }
+
+        declare_parameter("cmd_type", "jnt_id"); // defaults to "position"
+        get_parameter("cmd_type", cmd_type_);
+
+            RCLCPP_INFO(get_logger(),"Current control type is: '%s'", cmd_type_.c_str());
+
+            if (!(cmd_type_ == "op_id" || cmd_type_ == "jnt_id"))
+            {
+                RCLCPP_INFO(get_logger(),"Selected cmd interface is not valid!"); return;
+            }
 
         // declare cmd_interface parameter (positioning, look-at-point)
         declare_parameter("task", "look-at-point"); // defaults to "positioning"
@@ -134,9 +144,9 @@ public:
         KDL::Jacobian J_cam = robot_->getEEJacobian();
 
         // Specify an end-effector: camera in flange transform
-        KDL::Frame ee_T_cam;
+/*         KDL::Frame ee_T_cam;
         ee_T_cam.M = KDL::Rotation::RotY(1.57);
-        ee_T_cam.p = KDL::Vector(0.0,0,0.0);
+        ee_T_cam.p = KDL::Vector(0.0,0,0.0); */
 
         // Marker in spatial frame
         aruco_pose_ = cart_pose_ * pose_in_tool_frame;
@@ -178,7 +188,7 @@ public:
             total_time = 1.5, acc_duration = 0.5;
             planner_ = KDLPlanner(total_time, acc_duration, init_position, end_position); // currently using trapezoidal velocity profile
         } else {
-            end_position = toEigen(cart_pose_.p);
+            end_position = toEigen(cart_pose_.p) + Eigen::Vector3d(0.0, 0.1, 0.0);
             total_time = 2.5, acc_duration = 0.5;
             planner_ = KDLPlanner(total_time, acc_duration, init_position, end_position); // currently using trapezoidal velocity profile
         }
@@ -218,14 +228,18 @@ public:
         else if(cmd_interface_ == "effort"){
             // Create cmd publisher
             cmdPublisher_ = this->create_publisher<FloatArray>("/effort_controller/commands", 10);
-            timer_ = this->create_wall_timer(std::chrono::milliseconds(100), 
+            timer_ = this->create_wall_timer(std::chrono::milliseconds(20), 
                                         std::bind(&VisionControlNode::cmd_publisher, this));
         
             // Set joint effort commands
             for (long int i = 0; i < joint_efforts_.data.size(); ++i) {
                 desired_commands_[i] = joint_efforts_(i);
             }
-        }  
+        }
+
+        errPublisher_ = this->create_publisher<Float>("/error_topic", 10);
+            timer_e = this->create_wall_timer(std::chrono::milliseconds(100), 
+                                    std::bind(&VisionControlNode::error_publisher, this));
 
         // Create msg and publish
         std_msgs::msg::Float64MultiArray cmd_msg;
@@ -240,26 +254,23 @@ private:
 
     void cmd_publisher(){
 
-        iteration_ = iteration_ + 1;
+        iteration_++;
 
-        // define trajectory
-        //double total_time = 1.5; // 
-        int trajectory_len = total_time*100; // 
-        int loop_rate = trajectory_len / total_time;
-        double dt = 1.0 / loop_rate;
-        t_+=dt;
+        // Define trajectory
+        int trajectory_len = total_time * 100;
+        double dt = 1.0 / (trajectory_len / total_time);
+        t_ += dt;
 
         if (t_ < total_time){
-
-            KDL::Jacobian J_cam = robot_->getEEJacobian();
-            Eigen::VectorXd q0_dot = Eigen::VectorXd::Zero(nj);
-
             // Retrieve the trajectory point
-            p = planner_.compute_trajectory(t_); 
+            p = planner_.compute_trajectory(t_);
 
             // Compute EE frame acctual position and velocity
             KDL::Frame cartpos = robot_->getEEFrame();
             KDL::Twist cartvel = robot_->getEEVelocity();
+
+            KDL::Jacobian J_cam = robot_->getEEJacobian();
+            Eigen::VectorXd q0_dot = Eigen::VectorXd::Zero(nj);
 
             // Compute desired Frame position, velocity and acceleration at current p
             KDL::Frame desPos; desPos.M = cartpos.M; desPos.p = toKDL(p.pos);   // x_des
@@ -269,15 +280,14 @@ private:
             // compute errors
             error = computeLinearError(Eigen::Vector3d(desPos.p.data), Eigen::Vector3d(cartpos.p.data));
             o_error = computeOrientationError(toEigen(cartpos.M), toEigen(desPos.M));
-            std::cout << "The error norm is : " << error.norm() << std::endl;
-            error_norm = error.norm();
+/*             std::cout << "The error norm is : " << error.norm() << std::endl;
+            error_norm = error.norm(); */
 
             if(cmd_interface_ == "position"){
                 // Next Frame
                 KDL::Frame nextFrame; nextFrame.M = cartpos.M; nextFrame.p = cartpos.p + (toKDL(p.vel) + toKDL(1*error))*dt; 
 
                 // Compute IK
-                joint_positions_ = joint_positions_;
                 robot_->getInverseKinematics(nextFrame, joint_positions_);
             }
             else if(cmd_interface_ == "velocity"){
@@ -297,68 +307,93 @@ private:
                     KDL::changeBase(J_cam, cartpos_camera.M, J_cam_camera);
 
                     joint_velocities_.data = controller_.look_at_point_control(pose_in_camera_frame, cartpos_camera, J_cam_camera, q0_dot);
+
+                    // Compute errors
+                    Eigen::Vector3d c_P_o = toEigen(pose_in_camera_frame.p);
+                    Eigen::Vector3d s = c_P_o / c_P_o.norm();
+                    Eigen::Vector3d s_d(0, 0, 1); 
+
+                    Eigen::Vector3d s_error = s - s_d;
+                    error_norm = s_error.norm();
                 }
                 
             }
             else if(cmd_interface_ == "effort"){
-                //if(cmd_type_ == "jnt_id"){
+                if(cmd_type_ == "jnt_id"){
                 // Define control gains for proportional (Kp) and derivative (Kd) terms
-                double Kp = 25;
-                double Kd = 5;
+                double Kp = -10;
+                double Kd = -1;
 
-                // look at point: compute rotation error from angle/axis
-                Eigen::Matrix<double,3,1> aruco_pos_n = toEigen(aruco_pose_.p);
-                aruco_pos_n.normalize();
-                Eigen::Vector3d r_o = skew(Eigen::Vector3d(0,0,1))*aruco_pos_n;
-                double aruco_angle = std::acos(Eigen::Vector3d(0,0,1).dot(aruco_pos_n));
-                KDL::Rotation Re = KDL::Rotation::Rot(KDL::Vector(r_o[0], r_o[1], r_o[2]), aruco_angle);
-                //des_pose.M=robot.getEEFrame().M*Re*ee_T_cam.M.Inverse();
+                // Compute errors
+                Eigen::Vector3d c_P_o = toEigen(pose_in_camera_frame.p);
+                Eigen::Vector3d s = c_P_o / c_P_o.norm();
+                Eigen::Vector3d s_d(0, 0, 1); // Desired direction in camera frame
 
+                Eigen::Vector3d s_error = s - s_d;
+                error_norm = s_error.norm();
+                std::cout << error_norm << std::endl;
+
+                KDL::JntArray joint_velocities_prev; joint_velocities_prev.data = joint_velocities_.data;
+
+                // Update joint velocities
                 // Define the pose in the camera frame
                 KDL::Frame cartpos_camera = cartpos * KDL::Frame(
-                    KDL::Rotation::RotY(1.57) * KDL::Rotation::RotX(3.14)
+                    KDL::Rotation::RotY(-1.57) * KDL::Rotation::RotZ(-3.14)
                 );
-
                 // Transform the Jacobian J_cam into the camera frame
                 KDL::Jacobian J_cam_camera(J_cam.columns());
                 KDL::changeBase(J_cam, cartpos_camera.M, J_cam_camera);
 
-                joint_velocities_.data = controller_.look_at_point_control(pose_in_camera_frame, cartpos_camera, J_cam, q0_dot);
+                joint_velocities_.data = controller_.look_at_point_control(pose_in_camera_frame, cartpos_camera, J_cam_camera, q0_dot);
 
-                // Ensure proper orientation matrices for desired and current rotations
-                Eigen::Matrix<double,3,3,Eigen::RowMajor> R_des(cart_pose_.M.data);
-                Eigen::Matrix<double,3,3,Eigen::RowMajor> R_e(robot_->getEEFrame().M.data);
-                R_des = matrixOrthonormalization(R_des);
-                R_e = matrixOrthonormalization(R_e);
+                // Update joint positions and accelerations
+                joint_positions_.data = joint_positions_.data + joint_velocities_.data * dt;
+                joint_accelerations_.data = (joint_velocities_.data - joint_velocities_prev.data) / dt;
 
-                // Compute angular velocity errors
-                Eigen::Matrix<double,3,1> omega_des(cart_vel_.rot.data);
-                Eigen::Matrix<double,3,1> omega_e(robot_->getEEVelocity().rot.data);
-
-                // Compute velocity errors (linear and rotational)
-                Eigen::Vector3d error_dot = computeLinearError(p.vel, Eigen::Vector3d(cartvel.vel.data));
-                Eigen::Vector3d o_error_dot = computeOrientationVelocityError(omega_des, omega_e, R_des, R_e);
-                
-                // Compute joint accelerations using the Jacobian pseudo-inverse
-                Vector6d cartacc; cartacc << p.acc + 5*error_dot + 10*error, 5*o_error_dot + 10*o_error;
-                joint_accelerations_.data = pseudoinverse(robot_->getEEJacobian().data) * (cartacc
-                                    - robot_->getEEJacDotqDot()*joint_velocities_.data);
-
-                // Integrate acceleration to obtain velocity and position
-                joint_velocities_.data = joint_velocities_.data + joint_accelerations_.data*dt;
-                joint_positions_.data = joint_positions_.data + joint_velocities_.data*dt;
-
-                // Inverse dynamics to compute control torques
+                // Compute torques using inverse dynamics
                 joint_efforts_.data = controller_.idCntr(joint_positions_, joint_velocities_, joint_accelerations_, Kp, Kd);
-/*                 }
+
+                }
                 else if(cmd_type_ == "op_id"){
                     // define joint space inverse kinematics 
-                    double Kpp = 150;
-                    double Kpo = 10;
-                    double Kdp = 20;
-                    double Kdo = 10;
+                    double Kpp = -150;
+                    double Kpo = -10;
+                    double Kdp = -20;
+                    double Kdo = -10;
+
+                    // Define the pose in the camera frame
+                    KDL::Frame cartpos_camera = cartpos * KDL::Frame(
+                        KDL::Rotation::RotY(-1.57) * KDL::Rotation::RotZ(-3.14)
+                    );
+
+                    // Transform the Jacobian J_cam into the camera frame
+                    KDL::Jacobian J_cam_camera(J_cam.columns());
+                    KDL::changeBase(J_cam, cartpos_camera.M, J_cam_camera);
+
+                    joint_velocities_.data = controller_.look_at_point_control(pose_in_camera_frame, cartpos_camera, J_cam_camera, q0_dot);
+
+                    // Compute Cartesian velocity from joint velocities
+                    Eigen::VectorXd cartesian_vel = robot_->getEEJacobian().data * joint_velocities_.data;
+
+                    // Extract linear and angular components of Cartesian velocity
+                    KDL::Vector linear_vel(cartesian_vel[0], cartesian_vel[1], cartesian_vel[2]);
+                    KDL::Vector angular_vel(cartesian_vel[3], cartesian_vel[4], cartesian_vel[5]);
+                    // Create KDL::Twist for velocity
+                    KDL::Twist cartesian_twist(linear_vel, angular_vel);
+                    // Integrate the velocity to update the Cartesian position
+                    desPos.Integrate(cartesian_twist, dt);
+
                     joint_efforts_.data = controller_.idCntr(desPos, desVel, desAcc, Kpp, Kpo, Kdp, Kdo);
-                } */
+
+                    // Compute errors
+                    Eigen::Vector3d c_P_o = toEigen(pose_in_camera_frame.p);
+                    Eigen::Vector3d s = c_P_o / c_P_o.norm();
+                    Eigen::Vector3d s_d(0, 0, 1); // Desired direction in camera frame
+
+                    Eigen::Vector3d s_error = s - s_d;
+                    error_norm = s_error.norm();
+                    std::cout << error_norm << std::endl;
+                }
             }
 
             // Update KDLrobot structure
@@ -415,7 +450,9 @@ private:
                 KDL::Twist desVel; desVel = KDL::Twist(KDL::Vector::Zero(),KDL::Vector::Zero());   // x_dot_des
                 KDL::Twist desAcc; desAcc = KDL::Twist(KDL::Vector::Zero(),KDL::Vector::Zero());   // X_ddot_des
                 joint_efforts_.data = controller_.idCntr(desPos, desVel, desAcc, Kpp, Kpo, Kdp, Kdo);
-                for (long int i = 0; i < joint_velocities_.data.size(); ++i) {
+
+                robot_->update(toStdVector(joint_positions_.data),toStdVector(joint_velocities_.data));
+                for (long int i = 0; i < joint_efforts_.data.size(); ++i) {
                     desired_commands_[i] = joint_efforts_(i);
                 }
             }
@@ -458,11 +495,19 @@ private:
         }
     }
 
+    void error_publisher(){
+        std_msgs::msg::Float64 error_msg;
+        error_msg.data = error_norm;
+        errPublisher_->publish(error_msg);
+    }
+
     
 
     rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr image_sub_;
     rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr jointSubscriber_;
     rclcpp::Publisher<FloatArray>::SharedPtr cmdPublisher_;
+    rclcpp::Publisher<Float>::SharedPtr errPublisher_;
+    rclcpp::TimerBase::SharedPtr timer_e; 
     rclcpp::TimerBase::SharedPtr timer_; 
     rclcpp::TimerBase::SharedPtr subTimer_;
     rclcpp::Node::SharedPtr node_handle_;
@@ -491,6 +536,7 @@ private:
 
     std::string task_;
     std::string cmd_interface_;
+    std::string cmd_type_;
 
     KDL::Frame cart_pose_;
     KDL::Twist cart_vel_;
