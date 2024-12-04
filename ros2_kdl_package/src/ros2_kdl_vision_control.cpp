@@ -321,8 +321,8 @@ private:
             else if(cmd_interface_ == "effort"){
                 if(cmd_type_ == "jnt_id"){
                 // Define control gains for proportional (Kp) and derivative (Kd) terms
-                double Kp = -10;
-                double Kd = -1;
+                double Kp = 10;
+                double Kd = 1;
 
                 // Compute errors
                 Eigen::Vector3d c_P_o = toEigen(pose_in_camera_frame.p);
@@ -356,10 +356,10 @@ private:
                 }
                 else if(cmd_type_ == "op_id"){
                     // define joint space inverse kinematics 
-                    double Kpp = -150;
-                    double Kpo = -10;
-                    double Kdp = -20;
-                    double Kdo = -10;
+                    double Kpp = 150;
+                    double Kpo = 10;
+                    double Kdp = 20;
+                    double Kdo = 10;
 
                     // Define the pose in the camera frame
                     KDL::Frame cartpos_camera = cartpos * KDL::Frame(
@@ -372,7 +372,11 @@ private:
 
                     joint_velocities_.data = controller_.look_at_point_control(pose_in_camera_frame, cartpos_camera, J_cam_camera, q0_dot);
 
-                    // Compute Cartesian velocity from joint velocities
+                    robot_->update(toStdVector(joint_positions_.data),toStdVector(joint_velocities_.data));
+                    desPos = robot_->getEEFrame();
+                    desVel = robot_->getEEVelocity();
+
+/*                     // Compute Cartesian velocity from joint velocities
                     Eigen::VectorXd cartesian_vel = robot_->getEEJacobian().data * joint_velocities_.data;
 
                     // Extract linear and angular components of Cartesian velocity
@@ -381,7 +385,7 @@ private:
                     // Create KDL::Twist for velocity
                     KDL::Twist cartesian_twist(linear_vel, angular_vel);
                     // Integrate the velocity to update the Cartesian position
-                    desPos.Integrate(cartesian_twist, dt);
+                    desPos.Integrate(cartesian_twist, dt); */
 
                     joint_efforts_.data = controller_.idCntr(desPos, desVel, desAcc, Kpp, Kpo, Kdp, Kdo);
 
