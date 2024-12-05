@@ -456,7 +456,7 @@ private:
         KDL::Vector adjusted_position(
             kdl_position.data[0] + 0.03, // Add an offset to X
             kdl_position.data[1],        // Y remains the same
-            kdl_position.data[2] - 0.20  // Subtract an offset from Z
+            kdl_position.data[2] - 0.15  // Subtract an offset from Z
         );
 
         // Construct the rotation matrix with an additional rotation about Y
