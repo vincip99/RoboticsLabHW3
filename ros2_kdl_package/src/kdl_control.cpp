@@ -138,3 +138,79 @@ Eigen::VectorXd KDLController::look_at_point_control(KDL::Frame pose_in_camera_f
     return joint_velocities;
 
 }
+
+/* Eigen::VectorXd KDLController::idCntr_look_at_point(double prev_angle, double dt, KDL::Frame &_desPos,
+                                      KDL::Frame pose_in_camera_frame, KDL::Twist &_desVel,
+                                      KDL::Twist &_desAcc,
+                                      double _Kpp, double _Kpo,
+                                      double _Kdp, double _Kdo)
+{
+    // Calculate proportional and derivative gains
+    Eigen::Matrix<double,6,6> Kp = Eigen::Matrix<double,6,6>::Zero();
+    Eigen::Matrix<double,6,6> Kd = Eigen::Matrix<double,6,6>::Zero();
+
+    // Set gains for position and orientation
+    Kp.block(0,0,3,3) = _Kpp*Eigen::Matrix3d::Identity();
+    Kp.block(3,3,3,3) = _Kpo*Eigen::Matrix3d::Identity();
+    Kd.block(0,0,3,3) = _Kdp*Eigen::Matrix3d::Identity();
+    Kd.block(3,3,3,3) = _Kdo*Eigen::Matrix3d::Identity();
+
+    // Update the robot's state using its Jacobian and dynamics
+    Eigen::Matrix<double,6,7> J = robot_->getEEJacobian().data;
+    Eigen::Matrix<double,7,6> Jpinv = pseudoinverse(J);
+    Eigen::Matrix<double,7,7> B = robot_->getJsim();
+
+    // Compute desired and actual end-effector positions and orientations
+    Eigen::Vector3d x_des(_desPos.p.data);
+    Eigen::Vector3d x_e(robot_->getEEFrame().p.data);
+    Eigen::Matrix<double,3,3,Eigen::RowMajor> R_des(_desPos.M.data);
+    Eigen::Matrix<double,3,3,Eigen::RowMajor> R_e(robot_->getEEFrame().M.data);
+    R_des = matrixOrthonormalization(R_des);
+    R_e = matrixOrthonormalization(R_e);
+
+    // Angle between s and s_d
+    Eigen::Vector3d c_P_o = toEigen(pose_in_camera_frame.p);
+    Eigen::Vector3d s = c_P_o / c_P_o.norm();
+    Eigen::Vector3d s_d(0, 0, 1); // Desired direction in camera frame
+
+    double dot_product = s.dot(s_d);
+    double magnitudes = s.norm() * s_d.norm();
+    // Clamp the value to avoid numerical errors outside the domain of acos
+    double cos_theta = std::clamp(dot_product / magnitudes, -1.0, 1.0);
+    // Compute the angle in radians
+    double angle = std::acos(cos_theta);
+
+    // Compute desired and actual velocities
+    Eigen::Vector3d x_dot_des(_desVel.vel.data);
+    Eigen::Vector3d x_dot_e(robot_->getEEVelocity().vel.data);
+    Eigen::Matrix<double,3,1> omega_des(_desVel.rot.data);
+    Eigen::Matrix<double,3,1> omega_e(robot_->getEEVelocity().rot.data);
+
+    // Compute desired accelerations (linear and rotational)
+    Eigen::Matrix<double,6,1> x_ddot_des = Eigen::Matrix<double,6,1>::Zero();
+    Eigen::Matrix<double,3,1> alpha_des(_desAcc.vel.data);
+    Eigen::Matrix<double,3,1> alpha_r_des(_desAcc.rot.data); 
+
+    // Compute linear errors
+    Eigen::Matrix<double,3,1> e_p = computeLinearError(x_des, x_e);
+    Eigen::Matrix<double,3,1> e_dot_p = computeLinearError(x_dot_des, x_dot_e);
+    // Compute Rotational errors
+    Eigen::Matrix<double,3,1> e_o = angle;
+    Eigen::Matrix<double,3,1> e_dot_o = (angle - prev_angle)/dt;
+
+    // Combine position and orientation errors into a single vector
+    Eigen::Matrix<double,6,1> x_tilde = Eigen::Matrix<double,6,1>::Zero();
+    Eigen::Matrix<double,6,1> x_dot_tilde = Eigen::Matrix<double,6,1>::Zero();
+    x_tilde << e_p, e_o;
+    x_dot_tilde << e_dot_p, e_dot_o;
+    x_ddot_des << alpha_des, alpha_r_des;
+
+    // Inverse dynamics
+    Eigen::Matrix<double,6,1> y = Eigen::Matrix<double,6,1>::Zero();
+    Eigen::Matrix<double,6,1> J_dot_q_dot = robot_->getEEJacDotqDot()*robot_->getJntVelocities();
+    y << (x_ddot_des + Kd*x_dot_tilde + Kp*x_tilde - J_dot_q_dot);
+
+    // Return the computed joint torques (Optionally include gravity compensation)
+    return B*(Jpinv*y) + robot_->getCoriolis(); //+ robot_->getGravity();
+    
+} */

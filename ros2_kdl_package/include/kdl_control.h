@@ -32,6 +32,12 @@ public:
                                         KDL::Jacobian camera_jacobian,
                                         Eigen::VectorXd q0_dot);
 
+/*     Eigen::VectorXd idCntr_look_at_point(double prev_angle, double dt, KDL::Frame &_desPos,
+                                      KDL::Frame pose_in_camera_frame, KDL::Twist &_desVel,
+                                      KDL::Twist &_desAcc,
+                                      double _Kpp, double _Kpo,
+                                      double _Kdp, double _Kdo); */
+
 private:
 
     KDLRobot* robot_;
