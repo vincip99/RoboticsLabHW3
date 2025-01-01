@@ -512,9 +512,9 @@ private:
     KDL::JntArray q_dot_des;
     KDL::JntArray q_ddot_des;
 
+    KDL::Frame desPos;
     KDL::Twist desVel;
     KDL::Twist desAcc;
-    KDL::Frame desPos;
 
     KDL::Jacobian J_cam;
 

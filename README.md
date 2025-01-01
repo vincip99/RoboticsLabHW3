@@ -8,7 +8,7 @@ Implement a vision-based task with OpenCV and AruCo markers
 First build all the packages by using:
 
 ```
-colcon build 
+colcon build --packages-select iiwa_description iiwa_description iiwa_bringup ros2_kdl_package ros2_opencv
 ```
 In each terminal you open, source the install directory:
 ```
