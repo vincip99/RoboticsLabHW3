@@ -32,7 +32,7 @@ public:
         /////////////////////////////
 
         // declare cmd_interface parameter (position, velocity, effort)
-        declare_parameter("cmd_interface", "effort"); // defaults to "position"
+        declare_parameter("cmd_interface", "effort"); // defaults to "effort"
         get_parameter("cmd_interface", cmd_interface_);
         RCLCPP_INFO(get_logger(),"Current cmd interface is: '%s'", cmd_interface_.c_str());
 
@@ -41,15 +41,15 @@ public:
             RCLCPP_ERROR(get_logger(),"Selected cmd interface is not valid! Use 'position', 'velocity' or 'effort' instead..."); return;
         }
 
-        declare_parameter("cmd_type", "jnt_id"); // defaults to "position"
+        // declare cmd_type parameter (op_id, jnt_id)
+        declare_parameter("cmd_type", "jnt_id"); // defaults to "joint id cntr"
         get_parameter("cmd_type", cmd_type_);
+        RCLCPP_INFO(get_logger(),"Current control type is: '%s'", cmd_type_.c_str());
 
-            RCLCPP_INFO(get_logger(),"Current control type is: '%s'", cmd_type_.c_str());
-
-            if (!(cmd_type_ == "op_id" || cmd_type_ == "jnt_id"))
-            {
-                RCLCPP_INFO(get_logger(),"Selected cmd interface is not valid!"); return;
-            }
+        if (!(cmd_type_ == "op_id" || cmd_type_ == "jnt_id"))
+        {
+            RCLCPP_INFO(get_logger(),"Selected cmd interface is not valid!"); return;
+        }
 
         // declare cmd_interface parameter (positioning, look-at-point)
         declare_parameter("task", "look-at-point"); // defaults to "positioning"
@@ -94,7 +94,7 @@ public:
         nj = robot_->getNrJnts();
         KDL::JntArray q_min(nj), q_max(nj);
         q_min.data << -2.96,-2.09,-2.96,-2.09,-2.96,-2.09,-2.96; //-2*M_PI,-2*M_PI; // TODO: read from urdf file
-        q_max.data <<  2.96,2.09,2.96,2.09,2.96,2.09,2.96; //2*M_PI, 2*M_PI; // TODO: read from urdf file          
+        q_max.data <<  2.96,2.09,2.96,2.09,2.96,2.09,2.96; //2*M_PI, 2*M_PI; // TODO: read from urdf file
         robot_->setJntLimits(q_min,q_max);
 
         joint_positions_.resize(nj); // joint positions array
@@ -120,9 +120,6 @@ public:
         }
 
         // Update KDLrobot object
-/*         robot_->update(toStdVector(joint_positions_.data),toStdVector(joint_velocities_.data)); // Update with new joint pos and vel
-        KDL::Frame f_T_ee = KDL::Frame::Identity();
-        robot_->addEE(f_T_ee);  // Add the end effector frame */
         robot_->update(toStdVector(joint_positions_.data),toStdVector(joint_velocities_.data));
 
         KDL::Chain kdl_chain = robot_->getChain();
@@ -158,14 +155,6 @@ public:
             roll, pitch, yaw
         );
 
-        transformed_frame.M.GetRPY(roll, pitch, yaw);
-        RCLCPP_INFO(
-            this->get_logger(),
-            "Transformed Pose in camera frame:\nPosition: [x: %.2f, y: %.2f, z: %.2f]\nOrientation: [roll: %.2f, pitch: %.2f, yaw: %.2f]",
-            transformed_frame.p.x(), transformed_frame.p.y(), transformed_frame.p.z(),
-            roll, pitch, yaw
-        );
-
         pose_in_tool_frame.M.GetRPY(roll, pitch, yaw);
         RCLCPP_INFO(
             this->get_logger(),
@@ -184,21 +173,25 @@ public:
 
         // EE's trajectory initial position
         Eigen::Vector3d init_position = toEigen(init_cart_pose_.p);
-        std::cout << init_position <<std::endl;
+        std::cout << "Initial Position: " << init_position.transpose() << std::endl;
 
         // EE's trajectory end position
         Eigen::Vector3d end_position;
         if (task_ == "positioning"){
             end_position = toEigen(aruco_pose_base.p);
+            // Subtract an offset from the Y and Z-axis
+            // double z_offset = -0.30;  double y_offset = -0.10;
+            // end_position.y() -= y_offset; end_position.z() -= z_offset;
             // Plan trajectory
             total_time = 1.5, acc_duration = 0.5;
             planner_ = KDLPlanner(total_time, acc_duration, init_position, end_position); // currently using trapezoidal velocity profile
         } else {
             end_position = toEigen(init_cart_pose_.p) + Eigen::Vector3d(0.0, 0.1, 0.0);
-            total_time = 10.5, acc_duration = 0.5;
+            total_time = 20.0, acc_duration = 0.5;
             planner_ = KDLPlanner(total_time, acc_duration, init_position, end_position); // currently using trapezoidal velocity profile
         }
-        std::cout << end_position <<std::endl;
+        // Output the planned end position
+        std::cout << "End Position: " << end_position.transpose() << std::endl;
 
         // Retrieve the first trajectory point
         p = planner_.compute_trajectory(t_);
@@ -208,8 +201,6 @@ public:
         std::cout << "The error norm is : " << error.norm() << std::endl;
         error_norm = error.norm();
 
-
-        
         if(cmd_interface_ == "velocity"){
             // Create cmd publisher
             cmdPublisher_ = this->create_publisher<FloatArray>("/velocity_controller/commands", 10);
@@ -265,8 +256,8 @@ private:
             p = planner_.compute_trajectory(t_);
 
             // Compute EE frame acctual position and velocity
-            KDL::Frame cartpos = robot_->getEEFrame();
-            KDL::Twist cartvel = robot_->getEEVelocity();
+            KDL::Frame cartpos = robot_->getEEFrame();  // x_e
+            KDL::Twist cartvel = robot_->getEEVelocity();   // x_e_dot
             J_cam = robot_->getEEJacobian();
 
             Eigen::VectorXd q0_dot = Eigen::VectorXd::Zero(nj);
@@ -291,7 +282,7 @@ private:
                 else{
                     // Define the pose in the camera frame
                     KDL::Frame cartpos_camera = cartpos * KDL::Frame(
-                        KDL::Rotation::RotY(-1.57) * KDL::Rotation::RotZ(-3.14)
+                        KDL::Rotation::RotY(-1.57) * KDL::Rotation::RotZ(3.14)
                     );
 
                     // Transform the Jacobian J_cam into the camera frame
@@ -313,7 +304,7 @@ private:
                 
                 // Define the pose in the camera frame
                 KDL::Frame cartpos_camera = cartpos * KDL::Frame(
-                    KDL::Rotation::RotY(-1.57) * KDL::Rotation::RotZ(-3.14)
+                    KDL::Rotation::RotY(-1.57) * KDL::Rotation::RotZ(3.14)
                 );
                 // Transform the Jacobian J_cam into the camera frame
                 KDL::Jacobian J_cam_camera(J_cam.columns());
@@ -410,10 +401,6 @@ private:
                 }
             } else{
                 // Stop at the end of trajectory
-                double Kpp = 150;
-                double Kpo = 10;
-                double Kdp = 20;
-                double Kdo = 10;
                 KDL::Frame desPos; desPos = robot_->getEEFrame();   // x_des
                 KDL::Twist desVel; desVel = KDL::Twist(KDL::Vector::Zero(),KDL::Vector::Zero());   // x_dot_des
                 KDL::Twist desAcc; desAcc = KDL::Twist(KDL::Vector::Zero(),KDL::Vector::Zero());   // X_ddot_des
@@ -460,15 +447,8 @@ private:
         );
 
         // Construct the rotation matrix with an additional rotation about Y
-        KDL::Rotation adjusted_rotation = kdl_rotation * KDL::Rotation::RotY(-1.57);
+        KDL::Rotation adjusted_rotation = kdl_rotation * KDL::Rotation::RPY(0, -1.57, 0); //KDL::Rotation::RotY(-1.57);
         pose_in_tool_frame = KDL::Frame(adjusted_rotation, adjusted_position);
-
-        // Pose aligned 
-        // Transformation matrix
-        KDL::Rotation transform = KDL::Rotation::RotX(3.14) ; //* KDL::Rotation::RotY(1.57);
-        
-        // Apply the transformation
-        transformed_frame = KDL::Frame(transform) * pose_in_camera_frame;
 
     }
 
@@ -560,7 +540,6 @@ private:
 
     // Create a KDL rotation matrix from RPY
     KDL::Rotation cam_R_ee = KDL::Rotation::RPY(roll, pitch, yaw);
-    KDL::Frame transformed_frame;
     KDL::ChainFkSolverPos_recursive* fk_solver_;
 
     ////////////////////

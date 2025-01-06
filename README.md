@@ -37,7 +37,7 @@ The detected image is on the /processed_image topic
 
 ### Run the gazebo world with the aruco marker and use the controllers:
 
-Positioning Controller
+#### Positioning Controller
 ```
 ros2 launch iiwa_bringup iiwa.launch.py use_sim:=true use_vision:=true command_interface:="velocity" robot_controller:="velocity_controller"
 ```
@@ -52,7 +52,7 @@ In another terminal, run the control node
 ros2 run ros2_kdl_package ros2_kdl_vision_control --ros-args -p task:="positioning" -p cmd_interface:="velocity"
 ```
 
-Velocity controller with look at point controller:
+#### Velocity controller with look at point controller:
 
 ```
 ros2 launch iiwa_bringup iiwa.launch.py use_sim:=true use_vision:=true command_interface:="velocity" robot_controller:="velocity_controller"
@@ -68,7 +68,7 @@ In another terminal, run the control node
 ros2 run ros2_kdl_package ros2_kdl_vision_control --ros-args -p cmd_interface:="velocity" -p task:="look-at-point"
 ```
 
-Effort controller with inverse dynamics joint space look at point controller:
+#### Effort controller with inverse dynamics joint space look at point controller:
 
 ```
 ros2 launch iiwa_bringup iiwa.launch.py use_sim:=true use_vision:=true command_interface:="effort" robot_controller:="effort_controller"
@@ -84,7 +84,7 @@ In another terminal, run the control node
 ros2 run ros2_kdl_package ros2_kdl_vision_control --ros-args -p cmd_interface:="effort" -p cmd_type:="jnt_id"
 ```
 
-Effort controller with inverse dynamics operational space look at point controller:
+#### Effort controller with inverse dynamics operational space look at point controller:
 
 ```
 ros2 launch iiwa_bringup iiwa.launch.py use_sim:=true use_vision:=true command_interface:="effort" robot_controller:="effort_controller"
